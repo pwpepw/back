@@ -1,0 +1,1192 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>역전파(Backpropagation) 학습 시각화</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700&family=Noto+Sans+KR:wght@400;500;700&display=swap');
+
+  :root {
+    --bg:     #0d1117;
+    --panel:  #161b22;
+    --border: #30363d;
+    --text:   #e6edf3;
+    --muted:  #8b949e;
+    --blue:   #58a6ff;
+    --purple: #bc8cff;
+    --orange: #ffa657;
+    --green:  #3fb950;
+    --red:    #ff7b72;
+    --yellow: #e3b341;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'Noto Sans KR', sans-serif;
+    height: 100vh;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+  }
+
+  header {
+    text-align: center;
+    padding: 14px 0 10px;
+    font-size: 17px;
+    font-weight: 700;
+    letter-spacing: 0.02em;
+    border-bottom: 1px solid var(--border);
+    background: var(--panel);
+  }
+
+  .grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    grid-template-rows: minmax(0, 1fr) minmax(0, 1fr);
+    gap: 10px;
+    padding: 10px;
+    flex: 1;
+    min-height: 0;
+  }
+
+  .panel {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 12px;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    min-height: 0;
+  }
+
+  .panel-title {
+    font-size: 12px;
+    font-weight: 700;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    margin-bottom: 8px;
+    padding-bottom: 6px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  /* 신경망 캔버스 */
+  #netCanvas { width: 100%; flex: 1; height: 0; min-height: 0; }
+
+  /* 손실 차트 */
+  .chart-wrap { flex: 1; position: relative; }
+
+  /* 이미지 패널 */
+  .img-center {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+  }
+
+  #pixelGrid {
+    display: grid;
+    grid-template-columns: repeat(3, clamp(36px, 4.5vh, 52px));
+    grid-template-rows: repeat(4, clamp(36px, 4.5vh, 52px));
+    gap: 3px;
+  }
+
+  .pixel {
+    border-radius: 6px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: clamp(13px, 1.8vh, 20px);
+    font-weight: 700;
+    font-family: 'JetBrains Mono', monospace;
+    transition: background 0.2s;
+  }
+
+  .pixel.on  { background: #1f6feb; color: white; }
+  .pixel.off { background: #1c2128; color: var(--muted); }
+
+  .img-label {
+    font-size: 13px;
+    color: var(--muted);
+  }
+
+  .img-pred {
+    font-size: 14px;
+    font-weight: 700;
+  }
+
+  /* 예측 결과 */
+  #predList {
+    flex: 1;
+    overflow-y: auto;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+  }
+
+  .pred-row {
+    display: grid;
+    grid-template-columns: 42px 60px 60px 90px 20px;
+    align-items: center;
+    padding: 3px 4px;
+    border-radius: 4px;
+    transition: background 0.15s;
+  }
+
+  .pred-row.selected { background: #1f2937; }
+  .pred-row .idx { color: var(--yellow); }
+  .pred-row .ans { color: var(--text); }
+  .pred-row .prd-ok  { color: var(--green); font-weight: 700; }
+  .pred-row .prd-ng  { color: var(--red);   font-weight: 700; }
+  .pred-row .prob { color: var(--muted); font-size: 10px; }
+  .pred-row .chk-ok { color: var(--green); }
+  .pred-row .chk-ng { color: var(--red); }
+
+  .pred-total {
+    margin-top: 6px;
+    padding-top: 6px;
+    border-top: 1px solid var(--border);
+    text-align: center;
+    font-size: 12px;
+    font-weight: 700;
+    color: var(--yellow);
+  }
+
+  /* 하단 컨트롤 */
+  .controls {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    padding: 10px 16px;
+    background: var(--panel);
+    border-top: 1px solid var(--border);
+    flex-wrap: wrap;
+    flex-shrink: 0;
+  }
+
+  .btn-group { display: flex; gap: 8px; }
+
+  button {
+    background: #21262d;
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 7px 16px;
+    font-size: 13px;
+    font-family: 'Noto Sans KR', sans-serif;
+    cursor: pointer;
+    transition: background 0.15s, border-color 0.15s;
+  }
+
+  button:hover { background: var(--border); }
+  button.active { border-color: var(--blue); color: var(--blue); }
+
+  .slider-group {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 12px;
+    color: var(--muted);
+  }
+
+  input[type=range] {
+    -webkit-appearance: none;
+    width: 130px;
+    height: 4px;
+    border-radius: 2px;
+    background: var(--border);
+    outline: none;
+  }
+
+  input[type=range]::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    width: 14px; height: 14px;
+    border-radius: 50%;
+    background: var(--blue);
+    cursor: pointer;
+  }
+
+  .slider-val {
+    font-family: 'JetBrains Mono', monospace;
+    color: var(--yellow);
+    font-size: 12px;
+    min-width: 32px;
+  }
+
+  .status {
+    margin-left: auto;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
+    color: var(--yellow);
+    font-weight: 700;
+    white-space: nowrap;
+  }
+
+  /* ── 추가 기능 스타일 ── */
+
+  /* 델타 패널 */
+  .delta-overlay {
+    position: absolute;
+    top: 0; left: 0; right: 0; bottom: 0;
+    pointer-events: none;
+  }
+
+  /* 그라디언트 플로우 토글 */
+  .mode-badge {
+    font-size: 9px;
+    padding: 2px 6px;
+    border-radius: 10px;
+    font-weight: 700;
+    letter-spacing: 0.05em;
+  }
+  .mode-fwd { background: #1f4620; color: var(--green); }
+  .mode-bwd { background: #4a1010; color: var(--red); }
+
+  /* 비교 차트 패널 */
+  .compare-row {
+    display: flex;
+    gap: 6px;
+    margin-bottom: 6px;
+    flex-wrap: wrap;
+  }
+  .compare-tag {
+    font-size: 10px;
+    font-family: 'JetBrains Mono', monospace;
+    padding: 2px 8px;
+    border-radius: 4px;
+    border: 1px solid var(--border);
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+  .compare-tag.active-η { border-color: var(--orange); color: var(--orange); }
+  .compare-tag:hover { border-color: var(--muted); }
+
+  /* 애니메이션 펄스 */
+  @keyframes pulse-flow {
+    0%   { opacity: 1; }
+    50%  { opacity: 0.3; }
+    100% { opacity: 1; }
+  }
+
+  /* delta 표 */
+  .delta-table {
+    flex: 1;
+    overflow-y: auto;
+  }
+  .delta-section {
+    margin-bottom: 8px;
+  }
+  .delta-section-title {
+    font-size: 10px;
+    color: var(--muted);
+    margin-bottom: 4px;
+    font-family: 'JetBrains Mono', monospace;
+    letter-spacing: 0.05em;
+  }
+  .delta-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-bottom: 3px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+  }
+  .delta-label {
+    color: var(--muted);
+    min-width: 55px;
+  }
+  .delta-val {
+    min-width: 60px;
+    font-weight: 700;
+  }
+  .delta-bar-wrap {
+    flex: 1;
+    height: 6px;
+    background: #1c2128;
+    border-radius: 3px;
+    overflow: hidden;
+  }
+  .delta-bar {
+    height: 100%;
+    border-radius: 3px;
+    transition: width 0.3s, background 0.3s;
+  }
+
+  /* ── 슬로우모션 패널 ── */
+  #slowPanel {
+    display: none;
+    background: var(--panel);
+    border-top: 2px solid var(--yellow);
+    padding: 6px 16px 8px;
+    flex-shrink: 0;
+  }
+  .slow-stages {
+    display: flex;
+    align-items: center;
+    margin-bottom: 8px;
+  }
+  .slow-dot {
+    width: 26px; height: 26px;
+    border-radius: 50%;
+    border: 2px solid var(--border);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 10px; font-weight: 700;
+    font-family: 'JetBrains Mono', monospace;
+    color: var(--muted);
+    transition: all 0.3s;
+    flex-shrink: 0;
+  }
+  .slow-dot.done   { border-color: var(--green);  color: var(--green);  background: rgba(63,185,80,0.12); }
+  .slow-dot.active { border-color: var(--yellow); color: var(--yellow); background: rgba(227,179,65,0.18); animation: pulse-slow 1.2s ease-in-out infinite; }
+  @keyframes pulse-slow { 0%,100%{box-shadow:0 0 0 0 rgba(227,179,65,0.5)} 50%{box-shadow:0 0 0 6px rgba(227,179,65,0)} }
+  .slow-line {
+    flex: 1; height: 2px;
+    background: var(--border);
+    transition: background 0.3s;
+  }
+  .slow-line.done { background: var(--green); }
+  .slow-body {
+    display: grid;
+    grid-template-columns: 190px 1fr 165px;
+    gap: 14px;
+    align-items: start;
+  }
+  .slow-title { font-size: 13px; font-weight: 700; color: var(--yellow); margin-bottom: 4px; }
+  .slow-desc  { font-size: 11px; color: var(--muted); line-height: 1.5; }
+  .slow-formula {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px; color: var(--blue); line-height: 1.9;
+    background: rgba(88,166,255,0.06);
+    padding: 5px 10px; border-radius: 4px;
+    border-left: 2px solid var(--blue);
+    min-height: 24px;
+  }
+  .slow-values {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px; color: var(--text); line-height: 1.7;
+  }
+</style>
+</head>
+<body>
+
+<header>역전파(Backpropagation) 학습 시각화 — Lecture 07</header>
+
+<div class="grid">
+  <!-- 신경망 구조 (순전파/역전파 애니메이션 포함) -->
+  <div class="panel" style="position:relative;">
+    <div class="panel-title">
+      신경망 구조
+      <span class="mode-badge mode-fwd" id="flowBadge">FORWARD</span>
+    </div>
+    <canvas id="netCanvas"></canvas>
+  </div>
+
+  <!-- 손실 곡선 + 학습률 비교 -->
+  <div class="panel">
+    <div class="panel-title">손실(CT) &amp; 정확도 — 학습률 비교</div>
+    <div class="compare-row" id="compareRow"></div>
+    <div class="chart-wrap">
+      <canvas id="costChart"></canvas>
+    </div>
+  </div>
+
+  <!-- 입력 이미지 -->
+  <div class="panel">
+    <div class="panel-title" id="imgTitle">입력 이미지</div>
+    <div class="img-center">
+      <div id="pixelGrid"></div>
+      <div class="img-label" id="imgSampleLabel">샘플 #1 (정답: 숫자 0)</div>
+      <div class="img-pred" id="imgPred" style="color:var(--muted)">학습 전</div>
+    </div>
+  </div>
+
+  <!-- δ 값 + 예측 결과 -->
+  <div class="panel">
+    <div class="panel-title">δ(델타) 값 &amp; 전체 예측</div>
+    <div class="delta-table" id="deltaTable"></div>
+    <div style="border-top:1px solid var(--border); padding-top:6px; margin-top:6px;">
+      <div id="predList" style="font-family:'JetBrains Mono',monospace;font-size:10px;max-height:80px;overflow-y:auto;"></div>
+      <div class="pred-total" id="predTotal">학습 후 표시됩니다</div>
+    </div>
+  </div>
+</div>
+
+<!-- 슬로우모션 단계 패널 -->
+<div id="slowPanel">
+  <div class="slow-stages" id="slowStages"></div>
+  <div class="slow-body">
+    <div>
+      <div class="slow-title"   id="slowTitle"></div>
+      <div class="slow-formula" id="slowFormula"></div>
+    </div>
+    <div class="slow-desc" id="slowDesc"></div>
+    <div class="slow-values"  id="slowValues"></div>
+  </div>
+</div>
+
+<div class="controls">
+  <div class="btn-group">
+    <button id="btnStep">▶ Step (+1)</button>
+    <button id="btnAuto">⏩ Auto</button>
+    <button id="btnReset">↺ Reset</button>
+    <button id="btnAddEta">+ 현재 η 비교 추가</button>
+    <button id="btnSlow">📋 단계별 진행</button>
+    <button id="btnSlowNext" disabled>▶ 시작</button>
+  </div>
+  <div class="slider-group">
+    학습률 η
+    <input type="range" id="sldEta" min="0.01" max="1.0" step="0.01" value="0.2">
+    <span class="slider-val" id="valEta">0.20</span>
+  </div>
+  <div class="slider-group">
+    샘플 번호
+    <input type="range" id="sldSmp" min="0" max="63" step="1" value="0">
+    <span class="slider-val" id="valSmp">#1</span>
+  </div>
+  <div class="status" id="status">Epoch: 0  |  CT: —  |  정확도: —</div>
+</div>
+
+<script>
+// ── 데이터 ────────────────────────────────────────────────────────
+const X = [
+  [1,1,1,1,0,1,1,0,1,1,1,1],[0,1,1,1,0,1,1,0,1,1,1,1],[1,1,0,1,0,1,1,0,1,1,1,1],
+  [1,1,1,1,0,1,1,0,1,1,1,0],[1,1,1,1,0,1,1,0,1,0,1,1],[0,0,0,1,1,1,1,0,1,1,1,1],
+  [0,0,0,0,1,1,1,0,1,1,1,1],[0,0,0,1,1,0,1,0,1,1,1,1],[0,0,0,1,1,1,1,0,1,1,1,0],
+  [0,0,0,1,1,1,1,0,1,0,1,1],[1,1,1,1,0,1,1,1,1,0,0,0],[0,1,1,1,0,1,1,1,1,0,0,0],
+  [1,1,0,1,0,1,1,1,1,0,0,0],[1,1,1,1,0,1,1,1,0,0,0,0],[1,1,1,1,0,1,0,1,1,0,0,0],
+  [1,0,1,1,0,1,1,0,1,1,1,1],[1,1,1,1,0,0,1,0,1,1,1,1],[1,1,1,1,0,1,1,0,0,1,1,1],
+  [1,1,1,1,0,1,1,0,1,1,0,1],[1,1,1,1,0,1,0,0,1,1,1,1],[1,1,1,0,0,1,1,0,1,1,1,1],
+  [0,0,1,1,0,1,1,0,1,1,1,1],[0,1,1,1,0,0,1,0,1,1,1,1],[0,1,1,1,0,1,1,0,0,1,1,1],
+  [0,1,1,1,0,1,1,0,1,1,0,1],[0,1,1,1,0,1,0,0,1,1,1,1],[0,1,1,0,0,1,1,0,1,1,1,1],
+  [1,1,0,1,0,0,1,0,1,1,1,1],[1,1,0,1,0,1,1,0,0,1,1,1],[1,1,0,1,0,1,1,0,1,1,0,1],
+  [1,1,0,1,0,1,0,0,1,1,1,1],[1,1,0,1,0,1,1,0,1,1,1,1],
+  [0,1,0,0,1,0,0,1,0,0,1,0],[1,1,0,0,1,0,0,1,0,0,1,0],[0,1,0,0,1,0,0,1,0,1,1,0],
+  [0,1,0,0,1,0,0,1,0,0,1,1],[0,1,0,0,1,0,0,1,0,1,1,1],[1,1,0,0,1,0,0,1,0,1,1,0],
+  [1,1,0,0,1,0,0,1,0,0,1,1],[1,1,0,0,1,0,0,1,0,1,1,1],[0,1,0,0,1,1,0,1,0,0,1,0],
+  [0,1,0,0,1,0,0,1,1,0,1,0],[1,1,0,0,1,1,0,1,0,0,1,0],[1,1,0,0,1,0,0,1,1,0,1,0],
+  [0,1,0,0,1,1,1,1,0,1,1,0],[0,1,0,0,1,0,0,1,1,1,1,0],[0,1,0,0,1,0,0,1,0,1,1,1],
+  [1,1,0,0,1,1,0,1,1,0,1,1],[1,1,0,0,1,0,0,1,0,0,1,0],[0,1,1,0,1,1,0,1,0,0,1,1],
+  [1,1,0,1,1,0,0,1,0,0,1,0],[1,1,0,0,1,0,1,1,0,0,1,0],[1,1,0,1,1,0,1,1,0,1,1,0],
+  [1,1,0,0,1,0,0,0,0,0,1,0],[0,1,0,0,1,0,0,1,0,1,0,0],[1,0,0,0,1,0,0,1,0,0,1,0],
+  [1,0,0,0,1,0,0,1,0,0,0,1],[0,1,0,0,0,0,0,1,0,1,1,0],[0,1,0,0,1,0,0,0,0,1,1,0],
+  [0,0,0,0,1,0,0,1,0,1,1,0],[0,0,0,0,1,0,0,1,0,0,1,0],[0,1,0,0,1,0,0,1,0,0,0,0],
+  [0,1,0,0,1,0,0,1,0,0,0,0],[0,1,0,1,0,0,1,0,0,0,1,0],
+];
+const T  = [...Array(32).fill(0), ...Array(32).fill(1)];
+const T2 = T.map(t => t===0 ? [1,0] : [0,1]);
+
+// ── 신경망 ────────────────────────────────────────────────────────
+function sigmoid(z)  { return 1/(1+Math.exp(-Math.max(-500,Math.min(500,z)))); }
+function sigmoidD(z) { const s=sigmoid(z); return s*(1-s); }
+function mulMV(M,v)  { return M.map(row=>row.reduce((s,w,j)=>s+w*v[j],0)); }
+function addV(a,b)   { return a.map((x,i)=>x+b[i]); }
+
+let rngState = 42;
+function seededRand() {
+  rngState = (rngState * 1664525 + 1013904223) & 0xffffffff;
+  return (rngState >>> 0) / 0xffffffff;
+}
+function randN() {
+  const u=seededRand(), v=seededRand();
+  return Math.sqrt(-2*Math.log(u+1e-10))*Math.cos(2*Math.PI*v);
+}
+
+class Network {
+  constructor(eta=0.2) { this.eta=eta; this.reset(); }
+  reset() {
+    rngState=42;
+    this.W2=Array.from({length:3},()=>Array.from({length:12},()=>randN()*0.5));
+    this.b2=Array.from({length:3},()=>randN()*0.5);
+    this.W3=Array.from({length:2},()=>Array.from({length:3},()=>randN()*0.5));
+    this.b3=Array.from({length:2},()=>randN()*0.5);
+    this.epoch=0; this.CTHistory=[]; this.accHistory=[];
+    this.lastA2=null; this.lastA3=null;
+    this.lastZ2=null; this.lastZ3=null;
+    this.lastD2=null; this.lastD3=null; // ① 델타 저장
+  }
+  forward(x) {
+    const z2=addV(mulMV(this.W2,x),this.b2), a2=z2.map(sigmoid);
+    const z3=addV(mulMV(this.W3,a2),this.b3), a3=z3.map(sigmoid);
+    return {z2,a2,z3,a3};
+  }
+  trainEpoch() {
+    const dW3=this.W3.map(r=>r.map(()=>0));
+    const db3=this.b3.map(()=>0);
+    const dW2=this.W2.map(r=>r.map(()=>0));
+    const db2=this.b2.map(()=>0);
+    let CT=0;
+    const allA2=[],allA3=[],allZ2=[],allZ3=[],allD2=[],allD3=[];
+    for(let i=0;i<64;i++){
+      const {z2,a2,z3,a3}=this.forward(X[i]);
+      const t2=T2[i];
+      CT+=0.5*a3.reduce((s,v,j)=>s+(v-t2[j])**2,0);
+      const d3=a3.map((v,j)=>(v-t2[j])*sigmoidD(z3[j]));
+      const d2=this.b2.map((_,j)=>this.W3.reduce((s,row,k)=>s+row[j]*d3[k],0)*sigmoidD(z2[j]));
+      d3.forEach((dv,k)=>{ a2.forEach((av,j)=>{ dW3[k][j]+=dv*av; }); db3[k]+=dv; });
+      d2.forEach((dv,k)=>{ X[i].forEach((xv,j)=>{ dW2[k][j]+=dv*xv; }); db2[k]+=dv; });
+      allA2.push(a2); allA3.push(a3);
+      allZ2.push(z2); allZ3.push(z3);
+      allD2.push(d2); allD3.push(d3);
+    }
+    this.W3.forEach((row,k)=>row.forEach((_,j)=>{ this.W3[k][j]-=this.eta*dW3[k][j]; }));
+    this.b3.forEach((_,k)=>{ this.b3[k]-=this.eta*db3[k]; });
+    this.W2.forEach((row,k)=>row.forEach((_,j)=>{ this.W2[k][j]-=this.eta*dW2[k][j]; }));
+    this.b2.forEach((_,k)=>{ this.b2[k]-=this.eta*db2[k]; });
+    this.epoch++;
+    this.CTHistory.push(CT);
+    this.lastA2=allA2; this.lastA3=allA3;
+    this.lastZ2=allZ2; this.lastZ3=allZ3;
+    this.lastD2=allD2; this.lastD3=allD3;
+    const acc=allA3.filter((a3,i)=>a3.indexOf(Math.max(...a3))===T[i]).length;
+    this.accHistory.push(acc);
+    return {CT,acc};
+  }
+}
+
+// ── 앱 ────────────────────────────────────────────────────────────
+const net = new Network(0.2);
+let sel = 0;
+let autoTimer = null;
+let autoRunning = false;
+
+// ── ② 학습률 비교용 히스토리 ────────────────────────────────────
+const compareColors = ['#ffa657','#58a6ff','#3fb950','#bc8cff','#ff7b72','#e3b341'];
+let compareData = []; // [{eta, CTHistory, label}]
+
+// Chart.js 손실 차트
+const costCtx = document.getElementById('costChart').getContext('2d');
+const costChart = new Chart(costCtx, {
+  data: { labels:[], datasets:[] },
+  options: {
+    responsive:true, maintainAspectRatio:false,
+    animation:false,
+    plugins:{ legend:{ labels:{ color:'#8b949e', font:{size:9}, boxWidth:12 } } },
+    scales:{
+      x:{ type:'linear', ticks:{color:'#8b949e',font:{size:9},stepSize:1,callback:v=>Number.isInteger(v)?v:''}, grid:{color:'rgba(48,54,61,0.5)'} },
+      y1:{ position:'left',  ticks:{color:'#ffa657',font:{size:9}, callback:v=>+v.toFixed(3)}, grid:{color:'rgba(48,54,61,0.4)'} },
+      y2:{ position:'right', ticks:{color:'#3fb950',font:{size:9}}, grid:{display:false}, min:0, max:105 },
+    }
+  }
+});
+
+function rebuildChart() {
+  const datasets = [];
+  // 현재 네트워크 CT
+  datasets.push({
+    type:'line', label:`η=${net.eta.toFixed(2)} (현재)`,
+    data:net.CTHistory.map((v,i)=>({x:i+1,y:v})),
+    borderColor:'#ffa657', backgroundColor:'rgba(255,166,87,0.06)',
+    borderWidth:2, pointRadius:0, yAxisID:'y1', tension:0.3, fill:true
+  });
+  // 현재 정확도
+  datasets.push({
+    type:'line', label:'정확도(%)',
+    data:net.accHistory.map((a,i)=>({x:i+1,y:a/64*100})),
+    borderColor:'#3fb950', borderWidth:2, pointRadius:0,
+    yAxisID:'y2', tension:0.3, borderDash:[5,3]
+  });
+  // 비교 곡선들
+  compareData.forEach((c,i)=>{
+    datasets.push({
+      type:'line', label:`η=${c.eta.toFixed(2)} (저장)`,
+      data:c.CTHistory.map((v,i)=>({x:i+1,y:v})),
+      borderColor:c.color, borderWidth:1.5, pointRadius:0,
+      yAxisID:'y1', tension:0.3, borderDash:[3,3]
+    });
+  });
+  costChart.data.labels = [];
+  costChart.data.datasets = datasets;
+  costChart.update('none');
+}
+
+// ── 신경망 캔버스 + Gradient Flow 애니메이션 ────────────────────
+const netCanvas = document.getElementById('netCanvas');
+
+// ① Gradient Flow 상태
+let flowPhase = 'none'; // 'none' | 'forward' | 'backward'
+let flowProgress = 0;   // 0~1
+let flowTimer = null;
+
+function startFlow(phase) {
+  clearInterval(flowTimer);
+  flowPhase = phase;
+  flowProgress = 0;
+  document.getElementById('flowBadge').textContent = phase === 'forward' ? 'FORWARD ▶' : '◀ BACKWARD';
+  document.getElementById('flowBadge').className = 'mode-badge ' + (phase==='forward' ? 'mode-fwd' : 'mode-bwd');
+  flowTimer = setInterval(()=>{
+    flowProgress += 0.025;
+    if(flowProgress >= 1) {
+      flowProgress = 1;
+      clearInterval(flowTimer);
+      if(phase === 'forward') {
+        setTimeout(()=>startFlow('backward'), 150);
+      } else {
+        flowPhase = 'none';
+        document.getElementById('flowBadge').textContent = 'DONE ✓';
+        document.getElementById('flowBadge').className = 'mode-badge';
+        document.getElementById('flowBadge').style.background='#1a3a2a';
+        document.getElementById('flowBadge').style.color='#3fb950';
+      }
+    }
+    drawNetwork();
+  }, 30);
+}
+
+function drawNetwork() {
+  const canvas = netCanvas;
+  const dpr = window.devicePixelRatio||1;
+  const rect = canvas.getBoundingClientRect();
+  canvas.width  = rect.width  * dpr;
+  canvas.height = rect.height * dpr;
+  const ctx = canvas.getContext('2d');
+  ctx.scale(dpr,dpr);
+  const W=rect.width, H=rect.height;
+  ctx.clearRect(0,0,W,H);
+
+  const xs=[W*0.18, W*0.5, W*0.82];
+  const linspace=(n,lo,hi)=>Array.from({length:n},(_,i)=>lo+(hi-lo)*i/(n-1||1));
+  // 반지름: 너비·높이·최대값 중 가장 작은 값 → 캔버스가 작아져도 노드가 겹치거나 잘리지 않음
+  const iR=Math.min(W*0.045, H*0.032, 10);
+  const hR=Math.min(W*0.065, H*0.12,  14);
+  const oR=Math.min(W*0.075, H*0.16,  16);
+  const iy=linspace(12, Math.max(H*0.09, iR+30), Math.min(H*0.93, H-iR-6));
+  const hy=linspace(3,  Math.max(H*0.2,  hR+18), Math.min(H*0.8,  H-hR-6));
+  const oy=linspace(2,  Math.max(H*0.32, oR+18), Math.min(H*0.68, H-oR-6));
+
+  const W2flat=net.W2.flat(), W3flat=net.W3.flat();
+  const W2max=Math.max(...W2flat.map(Math.abs))+1e-8;
+  const W3max=Math.max(...W3flat.map(Math.abs))+1e-8;
+
+  // ── gradient flow 펄스 계산 ──
+  const isForward  = flowPhase === 'forward';
+  const isBackward = flowPhase === 'backward';
+
+  function pulseAlpha(segStart, segEnd) {
+    // segStart, segEnd: 0~1 범위 내 이 세그먼트의 위치
+    if(flowPhase === 'none') return null;
+    const inSeg = flowProgress >= segStart && flowProgress <= segEnd + 0.2;
+    if(!inSeg) return null;
+    const t = (flowProgress - segStart) / (segEnd - segStart + 0.001);
+    return Math.max(0, Math.min(1, t));
+  }
+
+  // W2 연결선 (입력→은닉)
+  hy.forEach((hy_,hi)=>{
+    iy.forEach((iy_,ii)=>{
+      const w=net.W2[hi][ii]/W2max;
+      const baseAlpha = Math.min(Math.abs(w)*0.6+0.05, 0.45);
+
+      let strokeColor = w>0 ? '#3fb950' : '#ff7b72';
+      let alpha = baseAlpha;
+      let lw = 0.7;
+
+      if(isForward) {
+        const p = pulseAlpha(0, 0.5);
+        if(p !== null) { alpha = baseAlpha + p*0.5; lw = 0.7 + p*2; strokeColor = '#58a6ff'; }
+      }
+      if(isBackward) {
+        const p = pulseAlpha(0.5, 1.0);
+        if(p !== null) { alpha = baseAlpha + (1-p)*0.5; lw = 0.7 + (1-p)*2; strokeColor = '#ff7b72'; }
+      }
+
+      ctx.beginPath();
+      ctx.moveTo(xs[0],iy_); ctx.lineTo(xs[1],hy_);
+      ctx.strokeStyle = strokeColor;
+      ctx.globalAlpha = alpha;
+      ctx.lineWidth = lw;
+      ctx.stroke();
+    });
+  });
+
+  // W3 연결선 (은닉→출력)
+  oy.forEach((oy_,oi)=>{
+    hy.forEach((hy_,hi)=>{
+      const w=net.W3[oi][hi]/W3max;
+      const baseAlpha = Math.min(Math.abs(w)*0.8+0.2, 0.9);
+
+      let strokeColor = w>0 ? '#3fb950' : '#ff7b72';
+      let alpha = baseAlpha;
+      let lw = Math.abs(w)*3+0.5;
+
+      if(isForward) {
+        const p = pulseAlpha(0.5, 1.0);
+        if(p !== null) { alpha = Math.min(1, baseAlpha + p*0.3); lw += p*2; strokeColor = '#58a6ff'; }
+      }
+      if(isBackward) {
+        const p = pulseAlpha(0, 0.5);
+        if(p !== null) { alpha = Math.min(1, baseAlpha + (1-p)*0.3); lw += (1-p)*2; strokeColor = '#ff7b72'; }
+      }
+
+      ctx.beginPath();
+      ctx.moveTo(xs[1],hy_); ctx.lineTo(xs[2],oy_);
+      ctx.strokeStyle = strokeColor;
+      ctx.globalAlpha = alpha;
+      ctx.lineWidth = lw;
+      ctx.stroke();
+    });
+  });
+  ctx.globalAlpha=1;
+
+  // ── 흐름 방향 화살표 ──
+  if(flowPhase !== 'none') {
+    const arrowX = isForward
+      ? xs[0] + (xs[2]-xs[0]) * flowProgress
+      : xs[2] - (xs[2]-xs[0]) * flowProgress;
+    ctx.save();
+    ctx.globalAlpha = 0.85;
+    ctx.fillStyle = isForward ? '#58a6ff' : '#ff7b72';
+    ctx.beginPath();
+    const aw = isForward ? 8 : -8;
+    ctx.moveTo(arrowX, H*0.02);
+    ctx.lineTo(arrowX + aw, H*0.02 + 10);
+    ctx.lineTo(arrowX - aw, H*0.02 + 10);
+    ctx.closePath();
+    ctx.fill();
+    ctx.font = 'bold 9px JetBrains Mono';
+    ctx.fillStyle = isForward ? '#58a6ff' : '#ff7b72';
+    ctx.textAlign = 'center';
+    ctx.fillText(isForward ? '순전파 →' : '← 역전파', arrowX, H*0.02 + 22);
+    ctx.restore();
+  }
+
+  // 입력 노드
+  const xv=X[sel];
+  iy.forEach((y,i)=>{
+    ctx.beginPath();
+    ctx.arc(xs[0],y,iR,0,Math.PI*2);
+    ctx.fillStyle=xv[i]>0.5?'#1f6feb':'#1c2128';
+    ctx.fill();
+    ctx.strokeStyle='#58a6ff'; ctx.lineWidth=1.5; ctx.stroke();
+    ctx.fillStyle='white'; ctx.font=`bold ${Math.max(7,iR*0.8)}px JetBrains Mono`;
+    ctx.textAlign='center'; ctx.textBaseline='middle';
+    ctx.fillText(xv[i],xs[0],y);
+  });
+
+  // 은닉 노드 + ① δ² 표시
+  const a2v=net.lastA2?net.lastA2[sel]:[0.5,0.5,0.5];
+  const d2v=net.lastD2?net.lastD2[sel]:null;
+  hy.forEach((y,i)=>{
+    const v=a2v[i];
+    ctx.beginPath(); ctx.arc(xs[1],y,hR,0,Math.PI*2);
+    ctx.fillStyle=`rgb(${Math.floor(v*60+20)},${Math.floor(v*180+30)},${Math.floor(v*80+20)})`;
+    ctx.fill();
+    ctx.strokeStyle='#bc8cff'; ctx.lineWidth=2; ctx.stroke();
+    ctx.fillStyle='black'; ctx.font=`bold ${Math.max(8,hR*0.7)}px JetBrains Mono`;
+    ctx.textAlign='center'; ctx.textBaseline='middle';
+    ctx.fillText(v.toFixed(2),xs[1],y);
+    // δ² 값
+    if(d2v) {
+      ctx.fillStyle='#bc8cff'; ctx.font='bold 8px JetBrains Mono';
+      ctx.textAlign='left';
+      ctx.fillText(`δ=${d2v[i].toFixed(3)}`, xs[1]+hR+3, y);
+    }
+  });
+
+  // 출력 노드 + ① δ³ 표시
+  const a3v=net.lastA3?net.lastA3[sel]:[0.5,0.5];
+  const d3v=net.lastD3?net.lastD3[sel]:null;
+  const ok=a3v.indexOf(Math.max(...a3v))===T[sel];
+  oy.forEach((y,i)=>{
+    const v=a3v[i];
+    ctx.beginPath(); ctx.arc(xs[2],y,oR,0,Math.PI*2);
+    ctx.fillStyle=`rgb(${Math.floor(v*60+20)},${Math.floor(v*180+30)},${Math.floor(v*80+20)})`;
+    ctx.fill();
+    ctx.strokeStyle=ok?'#3fb950':'#ff7b72'; ctx.lineWidth=2.5; ctx.stroke();
+    ctx.fillStyle='black'; ctx.font=`bold ${Math.max(9,oR*0.7)}px JetBrains Mono`;
+    ctx.textAlign='center'; ctx.textBaseline='middle';
+    ctx.fillText(v.toFixed(2),xs[2],y);
+    ctx.fillStyle='#8b949e'; ctx.font='10px Noto Sans KR';
+    ctx.textAlign='left';
+    ctx.fillText(['숫자0','숫자1'][i], xs[2]+oR+4, y-5);
+    // δ³ 값
+    if(d3v) {
+      ctx.fillStyle='#ff7b72'; ctx.font='bold 8px JetBrains Mono';
+      ctx.fillText(`δ=${d3v[i].toFixed(3)}`, xs[2]+oR+4, y+7);
+    }
+  });
+
+  // 레이어 레이블
+  const lbls=[['입력층','(12)','#58a6ff'],['은닉층','(3)','#bc8cff'],['출력층','(2)','#ffa657']];
+  ctx.textBaseline='top';
+  lbls.forEach(([l1,l2,col],i)=>{
+    ctx.fillStyle=col; ctx.font='bold 10px Noto Sans KR';
+    ctx.textAlign='center';
+    ctx.fillText(l1, xs[i], 2);
+    ctx.fillText(l2, xs[i], 14);
+  });
+  ctx.textBaseline='middle';
+
+  // ── Slow Mode 오버레이 ──
+  if(slowMode && slowStep>=0 && slowData){
+    ctx.save();
+    const sd=slowData;
+
+    if(slowStep===0){ // 순전파: 파란 glow
+      hy.forEach((hy_,hi)=>{
+        iy.forEach((iy_)=>{ ctx.beginPath(); ctx.moveTo(xs[0],iy_); ctx.lineTo(xs[1],hy_); ctx.strokeStyle='#58a6ff'; ctx.globalAlpha=0.22; ctx.lineWidth=0.9; ctx.stroke(); });
+        ctx.fillStyle='#8b949e'; ctx.font='7px JetBrains Mono'; ctx.globalAlpha=0.9; ctx.textAlign='right';
+        ctx.fillText(`z=${sd.z2[hi].toFixed(2)}`,xs[1]-hR-3,hy_-4);
+      });
+      oy.forEach((oy_,oi)=>{
+        hy.forEach((hy_)=>{ ctx.beginPath(); ctx.moveTo(xs[1],hy_); ctx.lineTo(xs[2],oy_); ctx.strokeStyle='#58a6ff'; ctx.globalAlpha=0.22; ctx.lineWidth=0.9; ctx.stroke(); });
+        ctx.fillStyle='#8b949e'; ctx.font='7px JetBrains Mono'; ctx.globalAlpha=0.9; ctx.textAlign='right';
+        ctx.fillText(`z=${sd.z3[oi].toFixed(2)}`,xs[2]-oR-3,oy_-4);
+      });
+    }
+
+    if(slowStep===1){ // 오차: 주황 glow + CT
+      oy.forEach((y,i)=>{
+        ctx.beginPath(); ctx.arc(xs[2],y,oR+9,0,Math.PI*2);
+        ctx.fillStyle='rgba(255,166,87,0.1)'; ctx.fill();
+        ctx.strokeStyle='#ffa657'; ctx.lineWidth=2; ctx.globalAlpha=0.8; ctx.stroke();
+        const d=sd.a3[i]-sd.t2[i];
+        ctx.fillStyle=d>0?'#ff7b72':'#3fb950'; ctx.font='bold 9px JetBrains Mono';
+        ctx.textAlign='left'; ctx.globalAlpha=1;
+        ctx.fillText(`a−t=${d.toFixed(3)}`,xs[2]+oR+4,y+18);
+      });
+      ctx.fillStyle='#ffa657'; ctx.font='bold 13px JetBrains Mono';
+      ctx.textAlign='center'; ctx.globalAlpha=1;
+      ctx.fillText(`CT = ${sd.CT.toFixed(4)}`,xs[2],Math.max(40, H*0.1));
+    }
+
+    if(slowStep===2){ // δ³: 빨간 glow on 출력층
+      oy.forEach((y)=>{ ctx.beginPath(); ctx.arc(xs[2],y,oR+11,0,Math.PI*2); ctx.fillStyle='rgba(255,123,114,0.1)'; ctx.fill(); ctx.strokeStyle='#ff7b72'; ctx.lineWidth=2.5; ctx.globalAlpha=0.85; ctx.stroke(); });
+      ctx.fillStyle='#ff7b72'; ctx.font='bold 10px JetBrains Mono'; ctx.textAlign='center'; ctx.globalAlpha=1;
+      ctx.fillText('← δ³ 계산됨',xs[2],Math.max(40, H*0.08));
+    }
+
+    if(slowStep===3){ // δ²: 역방향 화살표 + 보라 glow
+      oy.forEach((oy_)=>hy.forEach((hy_)=>{ ctx.beginPath(); ctx.moveTo(xs[2],oy_); ctx.lineTo(xs[1],hy_); ctx.strokeStyle='#ff7b72'; ctx.globalAlpha=0.35; ctx.lineWidth=1.5; ctx.stroke(); }));
+      hy.forEach((y)=>{ ctx.beginPath(); ctx.arc(xs[1],y,hR+9,0,Math.PI*2); ctx.fillStyle='rgba(188,140,255,0.1)'; ctx.fill(); ctx.strokeStyle='#bc8cff'; ctx.lineWidth=2.5; ctx.globalAlpha=0.85; ctx.stroke(); });
+      ctx.fillStyle='#ff7b72'; ctx.font='bold 10px JetBrains Mono'; ctx.textAlign='center'; ctx.globalAlpha=1;
+      ctx.fillText('◀ 역전파',(xs[1]+xs[2])/2,Math.max(40, H*0.06));
+    }
+
+    if(slowStep===4){ // ΔW: 연결선에 변화량 색상
+      const eta=net.eta;
+      hy.forEach((hy_,hi)=>iy.forEach((iy_,ii)=>{
+        const dw=eta*sd.d2[hi]*sd.x[ii];
+        ctx.beginPath(); ctx.moveTo(xs[0],iy_); ctx.lineTo(xs[1],hy_);
+        ctx.strokeStyle=dw<0?'#3fb950':'#ff7b72';
+        ctx.globalAlpha=Math.min(Math.abs(dw)*28+0.05,0.85); ctx.lineWidth=Math.min(Math.abs(dw)*45+0.3,3.5); ctx.stroke();
+      }));
+      oy.forEach((oy_,oi)=>hy.forEach((hy_,hi)=>{
+        const dw=eta*sd.d3[oi]*sd.a2[hi];
+        ctx.beginPath(); ctx.moveTo(xs[1],hy_); ctx.lineTo(xs[2],oy_);
+        ctx.strokeStyle=dw<0?'#3fb950':'#ff7b72';
+        ctx.globalAlpha=Math.min(Math.abs(dw)*28+0.05,0.9); ctx.lineWidth=Math.min(Math.abs(dw)*45+0.3,4); ctx.stroke();
+      }));
+      ctx.fillStyle='#e3b341'; ctx.font='bold 10px JetBrains Mono'; ctx.textAlign='center'; ctx.globalAlpha=1;
+      ctx.fillText('ΔW  녹색=감소  빨강=증가',(xs[0]+xs[2])/2,Math.max(40, H*0.06));
+    }
+    ctx.restore();
+  }
+}
+
+// 픽셀 그리드
+function drawImage() {
+  const grid=document.getElementById('pixelGrid');
+  grid.innerHTML='';
+  document.getElementById('imgSampleLabel').textContent=`샘플 #${sel+1}  (정답: 숫자 ${T[sel]})`;
+  X[sel].forEach(v=>{
+    const d=document.createElement('div');
+    d.className=`pixel ${v>0.5?'on':'off'}`;
+    d.textContent=v;
+    grid.appendChild(d);
+  });
+  if(net.lastA3){
+    const a3=net.lastA3[sel];
+    const pred=a3.indexOf(Math.max(...a3));
+    const ok=pred===T[sel];
+    const el=document.getElementById('imgPred');
+    el.textContent=`예측: 숫자 ${pred}  ${ok?'✓':'✗'}`;
+    el.style.color=ok?'var(--green)':'var(--red)';
+  } else {
+    document.getElementById('imgPred').textContent='학습 전';
+    document.getElementById('imgPred').style.color='var(--muted)';
+  }
+}
+
+// ① δ 값 표시 패널
+function drawDelta() {
+  const tbl = document.getElementById('deltaTable');
+  if(!net.lastD2 || !net.lastD3) {
+    tbl.innerHTML = '<div style="color:var(--muted);font-size:11px;font-family:JetBrains Mono,monospace;padding:4px;">Step 후 δ 값이 표시됩니다</div>';
+    return;
+  }
+  const d2 = net.lastD2[sel];
+  const d3 = net.lastD3[sel];
+  const maxD = Math.max(...d2.map(Math.abs), ...d3.map(Math.abs)) + 1e-8;
+
+  let html = '';
+
+  html += '<div class="delta-section">';
+  html += '<div class="delta-section-title">▶ 출력층 δ³ (오차 × σ\')</div>';
+  d3.forEach((v,i)=>{
+    const pct = Math.abs(v)/maxD*100;
+    const col = v > 0 ? '#ff7b72' : '#58a6ff';
+    html += `<div class="delta-row">
+      <span class="delta-label">δ³[${i}] 숫자${i}</span>
+      <span class="delta-val" style="color:${col}">${v.toFixed(4)}</span>
+      <div class="delta-bar-wrap"><div class="delta-bar" style="width:${pct}%;background:${col}"></div></div>
+    </div>`;
+  });
+  html += '</div>';
+
+  html += '<div class="delta-section">';
+  html += '<div class="delta-section-title">◀ 은닉층 δ² (역전파된 gradient)</div>';
+  d2.forEach((v,i)=>{
+    const pct = Math.abs(v)/maxD*100;
+    const col = v > 0 ? '#bc8cff' : '#ffa657';
+    html += `<div class="delta-row">
+      <span class="delta-label">δ²[${i}] 은닉${i+1}</span>
+      <span class="delta-val" style="color:${col}">${v.toFixed(4)}</span>
+      <div class="delta-bar-wrap"><div class="delta-bar" style="width:${pct}%;background:${col}"></div></div>
+    </div>`;
+  });
+  html += '</div>';
+
+  // 수식 설명
+  html += `<div style="font-size:9px;color:var(--muted);font-family:JetBrains Mono,monospace;line-height:1.6;padding-top:4px;border-top:1px solid var(--border)">
+    δ³ = (a³-t)·σ'(z³)<br>
+    δ² = (W³ᵀ·δ³)·σ'(z²)
+  </div>`;
+
+  tbl.innerHTML = html;
+}
+
+// 예측 결과 리스트
+function drawPred() {
+  const list=document.getElementById('predList');
+  list.innerHTML='';
+  if(!net.lastA3){ document.getElementById('predTotal').textContent='학습 후 표시됩니다'; return; }
+  const lo=Math.max(0,Math.min(sel-3,58));
+  const hi=Math.min(64,lo+7);
+  for(let i=lo;i<hi;i++){
+    const a3=net.lastA3[i];
+    const pred=a3.indexOf(Math.max(...a3));
+    const ok=pred===T[i];
+    const row=document.createElement('div');
+    row.className=`pred-row ${i===sel?'selected':''}`;
+    row.innerHTML=`
+      <span class="idx">${i===sel?'▶':' '}#${i+1}</span>
+      <span class="ans">정답:${T[i]}</span>
+      <span class="${ok?'prd-ok':'prd-ng'}">예측:${pred}</span>
+      <span class="prob">[${a3[0].toFixed(2)},${a3[1].toFixed(2)}]</span>
+      <span class="${ok?'chk-ok':'chk-ng'}">${ok?'✓':'✗'}</span>
+    `;
+    list.appendChild(row);
+  }
+  const total=net.lastA3.filter((a3,i)=>a3.indexOf(Math.max(...a3))===T[i]).length;
+  document.getElementById('predTotal').textContent=`전체 정확도: ${total} / 64  (${(total/64*100).toFixed(1)}%)`;
+}
+
+function updateStatus() {
+  const h=net.CTHistory;
+  const ct=h.length?h[h.length-1].toFixed(4):'—';
+  const acc=net.accHistory.length?`${net.accHistory[net.accHistory.length-1]}/64 (${(net.accHistory[net.accHistory.length-1]/64*100).toFixed(1)}%)`:'—';
+  document.getElementById('status').textContent=`Epoch: ${net.epoch}  |  CT: ${ct}  |  정확도: ${acc}`;
+}
+
+function drawAll() {
+  drawNetwork();
+  drawImage();
+  drawDelta();
+  drawPred();
+  rebuildChart();
+  updateStatus();
+}
+
+// ── 이벤트 ────────────────────────────────────────────────────────
+document.getElementById('btnStep').addEventListener('click',()=>{
+  net.trainEpoch();
+  drawAll();
+  startFlow('forward'); // ① Step 시 애니메이션
+});
+
+document.getElementById('btnAuto').addEventListener('click',()=>{
+  autoRunning=!autoRunning;
+  document.getElementById('btnAuto').textContent=autoRunning?'⏸ Pause':'⏩ Auto';
+  document.getElementById('btnAuto').classList.toggle('active',autoRunning);
+  if(autoRunning){
+    autoTimer=setInterval(()=>{ net.trainEpoch(); drawAll(); },150);
+  } else {
+    clearInterval(autoTimer);
+  }
+});
+
+document.getElementById('btnReset').addEventListener('click',()=>{
+  autoRunning=false; clearInterval(autoTimer); clearInterval(flowTimer);
+  document.getElementById('btnAuto').textContent='⏩ Auto';
+  document.getElementById('btnAuto').classList.remove('active');
+  flowPhase='none';
+  document.getElementById('flowBadge').textContent='FORWARD';
+  document.getElementById('flowBadge').className='mode-badge mode-fwd';
+  net.reset(); drawAll();
+});
+
+// ② 비교 저장 버튼
+document.getElementById('btnAddEta').addEventListener('click',()=>{
+  if(net.CTHistory.length === 0) { alert('먼저 학습을 진행하세요!'); return; }
+  if(compareData.length >= 4) { compareData.shift(); } // 최대 4개
+  const color = compareColors[compareData.length + 1];
+  compareData.push({ eta: net.eta, CTHistory:[...net.CTHistory], color });
+  rebuildChart();
+  updateCompareTags();
+});
+
+function updateCompareTags() {
+  const row = document.getElementById('compareRow');
+  row.innerHTML = compareData.map((c,i)=>
+    `<span class="compare-tag" style="border-color:${c.color};color:${c.color}">η=${c.eta.toFixed(2)} (${c.CTHistory.length}ep)</span>`
+  ).join('');
+}
+
+document.getElementById('sldEta').addEventListener('input',e=>{
+  net.eta=parseFloat(e.target.value);
+  document.getElementById('valEta').textContent=parseFloat(e.target.value).toFixed(2);
+});
+
+document.getElementById('sldSmp').addEventListener('input',e=>{
+  sel=parseInt(e.target.value);
+  document.getElementById('valSmp').textContent=`#${sel+1}`;
+  drawAll();
+});
+
+window.addEventListener('resize',()=>drawNetwork());
+
+// ── 슬로우모션 모드 ────────────────────────────────────────────────
+let slowMode = false;
+let slowStep = -1; // -1: 대기, 0~4: 단계
+let slowData = null;
+
+const SLOW_STAGES = [
+  {
+    title:   '① 네트워크가 답을 예측해봅니다',
+    formula: 'z² = W²·x + b²<br>a² = σ(z²)<br>z³ = W³·a² + b³<br>a³ = σ(z³)',
+    desc:    '입력 이미지의 픽셀값이 왼쪽에서 오른쪽으로 흘러갑니다.\n각 연결선(가중치)이 신호를 증폭하거나 줄이면서\n마지막에 "숫자0일 확률, 숫자1일 확률"을 뱉어냅니다.\n→ 이것이 순전파(Forward Pass)입니다.',
+  },
+  {
+    title:   '② 얼마나 틀렸는지 확인합니다',
+    formula: 'CT = ½·Σ(aₖ³ − tₖ)²',
+    desc:    '네트워크가 낸 답과 정답을 비교합니다.\n차이가 클수록 손실(CT)이 커집니다.\n→ 이 오차를 줄이는 것이 학습의 목표입니다.',
+  },
+  {
+    title:   '③ 출력층 뉴런이 책임을 계산합니다',
+    formula: 'δₖ³ = (aₖ³ − tₖ) · σ\'(zₖ³)',
+    desc:    '"내 출력이 정답보다 높았나, 낮았나?"\n각 출력 뉴런이 오차에 얼마나 기여했는지 δ로 표현합니다.\n→ δ가 클수록 그 뉴런이 이번 실수에 더 책임이 큽니다.',
+  },
+  {
+    title:   '④ 책임을 뒤로 전달합니다 — 역전파',
+    formula: 'δⱼ² = (Σₖ Wₖⱼ³ · δₖ³) · σ\'(zⱼ²)',
+    desc:    '출력층의 책임(δ³)이 연결선을 타고 거꾸로 흘러옵니다.\n은닉층 뉴런들도 "나는 얼마나 이 실수에 기여했나"를 파악합니다.\n→ 이것이 역전파(Backpropagation)의 핵심 아이디어입니다.',
+  },
+  {
+    title:   '⑤ 연결선을 조금씩 고쳐서 다음엔 덜 틀립니다',
+    formula: 'W³ -= η · δ³ · (a²)ᵀ<br>W² -= η · δ² · xᵀ',
+    desc:    '책임이 큰 연결선일수록 더 많이 수정됩니다.\n학습률 η는 한 번에 얼마나 고칠지 결정합니다.\n→ 이 과정을 수천 번 반복하면 네트워크가 점점 똑똑해집니다.',
+  },
+];
+
+function computeSlowData(){
+  const x=X[sel], t2=T2[sel];
+  const {z2,a2,z3,a3}=net.forward(x);
+  const CT=0.5*a3.reduce((s,v,j)=>s+(v-t2[j])**2,0);
+  const d3=a3.map((v,j)=>(v-t2[j])*sigmoidD(z3[j]));
+  const d2=net.b2.map((_,j)=>net.W3.reduce((s,row,k)=>s+row[j]*d3[k],0)*sigmoidD(z2[j]));
+  slowData={x,z2,a2,z3,a3,t2,CT,d2,d3};
+}
+
+function updateSlowPanel(){
+  const panel=document.getElementById('slowPanel');
+  if(!slowMode){ panel.style.display='none'; return; }
+  panel.style.display='block';
+
+  const names=['예측','오차확인','출력책임','역전파','수정'];
+  let html='';
+  names.forEach((name,i)=>{
+    const cls=slowStep<0?'':i<slowStep?'done':i===slowStep?'active':'';
+    html+=`<div style="position:relative;display:flex;flex-direction:column;align-items:center"><div class="slow-dot ${cls}">${i+1}</div><span style="position:absolute;top:29px;font-size:8px;color:var(--muted);white-space:nowrap;font-family:'JetBrains Mono',monospace">${name}</span></div>`;
+    if(i<4) html+=`<div class="slow-line ${slowStep>i?'done':''}"></div>`;
+  });
+  document.getElementById('slowStages').innerHTML=html;
+
+  if(slowStep<0){
+    document.getElementById('slowTitle').textContent=`샘플 #${sel+1}  |  정답: 숫자 ${T[sel]}  — 이 이미지로 역전파 한 사이클을 따라가봅시다`;
+    document.getElementById('slowFormula').innerHTML='';
+    document.getElementById('slowDesc').textContent='▶ 시작 버튼을 눌러 단계별로 따라가보세요';
+    document.getElementById('slowValues').innerHTML='';
+    return;
+  }
+
+  const s=SLOW_STAGES[slowStep];
+  document.getElementById('slowTitle').textContent=s.title;
+  document.getElementById('slowFormula').innerHTML=s.formula;
+  document.getElementById('slowDesc').innerHTML=s.desc.replace(/\n/g,'<br>');
+
+  let valHtml='';
+  if(slowData){
+    switch(slowStep){
+      case 0:
+        slowData.a2.forEach((v,i)=>{ valHtml+=`<span style="color:var(--purple)">a²[${i}]</span> = <b>${v.toFixed(4)}</b><br>`; });
+        slowData.a3.forEach((v,i)=>{ valHtml+=`<span style="color:var(--orange)">a³[${i}]</span> = <b>${v.toFixed(4)}</b><br>`; });
+        break;
+      case 1:
+        slowData.a3.forEach((v,i)=>{ const d=v-slowData.t2[i]; valHtml+=`a³[${i}]−t = <b style="color:${d>0?'var(--red)':'var(--green)'}">${d.toFixed(4)}</b><br>`; });
+        valHtml+=`<b style="color:var(--orange)">CT = ${slowData.CT.toFixed(4)}</b>`;
+        break;
+      case 2:
+        slowData.d3.forEach((v,i)=>{ valHtml+=`<b style="color:var(--red)">δ³[${i}]</b> = ${v.toFixed(4)}<br>`; });
+        break;
+      case 3:
+        slowData.d2.forEach((v,i)=>{ valHtml+=`<b style="color:var(--purple)">δ²[${i}]</b> = ${v.toFixed(4)}<br>`; });
+        break;
+      case 4:
+        const mW3=Math.max(...slowData.d3.flatMap((v,k)=>slowData.a2.map(a=>Math.abs(net.eta*v*a))));
+        const mW2=Math.max(...slowData.d2.flatMap(v=>slowData.x.map(xv=>Math.abs(net.eta*v*xv))));
+        valHtml=`η = ${net.eta.toFixed(2)}<br>max|ΔW³| = <b style="color:var(--green)">${mW3.toFixed(4)}</b><br>max|ΔW²| = <b style="color:var(--green)">${mW2.toFixed(4)}</b>`;
+        break;
+    }
+  }
+  document.getElementById('slowValues').innerHTML=valHtml;
+}
+
+function stepSlow(){
+  if(!slowMode) return;
+  if(slowStep<0){ computeSlowData(); slowStep=0; }
+  else if(slowStep<4){ slowStep++; }
+  else {
+    net.trainEpoch(); slowStep=-1; slowData=null;
+    document.getElementById('btnSlowNext').textContent='▶ 시작';
+    drawAll(); updateSlowPanel(); return;
+  }
+  document.getElementById('btnSlowNext').textContent=slowStep<4?`다음 단계 ▶ (${slowStep+1}/5)`:'✓ 업데이트 적용';
+  updateSlowPanel(); drawNetwork();
+}
+
+document.getElementById('btnSlow').addEventListener('click',()=>{
+  slowMode=!slowMode;
+  document.getElementById('btnSlow').classList.toggle('active',slowMode);
+  document.getElementById('btnSlow').textContent=slowMode?'📋 단계별 진행 ON':'📋 단계별 진행';
+  document.getElementById('btnSlowNext').disabled=!slowMode;
+  if(!slowMode){ slowStep=-1; slowData=null; }
+  else { document.getElementById('btnSlowNext').textContent='▶ 시작'; }
+  updateSlowPanel(); drawNetwork();
+});
+
+document.getElementById('btnSlowNext').addEventListener('click',stepSlow);
+5
+drawAll();
+</script>
+</body>
+</html>
